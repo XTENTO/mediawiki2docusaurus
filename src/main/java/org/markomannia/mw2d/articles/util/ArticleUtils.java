@@ -11,13 +11,8 @@ public class ArticleUtils {
 	}
 
 	public static String determineArticleWithCategoryPath(final ArticleRecord article) {
-		final String categoryText = article.fromCategory() == null || article.fromCategory().text() == null || article.fromCategory().text().isEmpty()
-				? ""
-				: article.fromCategory().text();
-		
-		final String categoryDirectory = categoryText.isEmpty() ? "" : "/" + categoryText;
-
-		return CategoryUtils.cleanCategoryDirectoryName(categoryDirectory) + "/"
-				+ cleanArticleFileName(article.fromTitle());
+		// Use only the article title for the path - don't add category prefix
+		// This preserves the original MediaWiki URL structure
+		return "/" + cleanArticleFileName(article.fromTitle());
 	}
 }

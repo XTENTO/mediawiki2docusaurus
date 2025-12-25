@@ -5,6 +5,7 @@
 *.jar
 hs_err_pid*
 out/
+out.zip
 
 ### Eclipse ###
 .settings/

@@ -35,9 +35,20 @@ public class Main {
 
 		final List<MediaWikiPageRecord> pages = MediaWikiClient.getPages();
 
-		final List<MediaWikiPageRecord> realPages = pages.stream().filter(p -> !p.isRedirect())
+		// Filter out Special: and Category: pages (based on URL pattern)
+		final List<MediaWikiPageRecord> realPages = pages.stream()
+				.filter(p -> !p.isRedirect())
+				.filter(p -> !p.url().contains("/Special:"))
+				.filter(p -> !p.url().contains("/Category:"))
+				.filter(p -> !p.url().contains("title=Special:"))
+				.filter(p -> !p.url().contains("title=Category:"))
 				.collect(Collectors.toList());
-		final List<MediaWikiPageRecord> redirects = pages.stream().filter(p -> p.isRedirect())
+		final List<MediaWikiPageRecord> redirects = pages.stream()
+				.filter(p -> p.isRedirect())
+				.filter(p -> !p.url().contains("/Special:"))
+				.filter(p -> !p.url().contains("/Category:"))
+				.filter(p -> !p.url().contains("title=Special:"))
+				.filter(p -> !p.url().contains("title=Category:"))
 				.collect(Collectors.toList());
 
 		System.out.println("Found " + realPages.size() + " articles");
@@ -94,7 +105,7 @@ public class Main {
 		
 		// Write Docusaurus configuration files
 		DocusaurusConfigWriter.writeSidebar(categoriesSorted, articlesByCategory);
-		DocusaurusConfigWriter.writeDocusaurusConfig();
+		DocusaurusConfigWriter.writeDocusaurusConfig(articles);
 		
 		System.out.println("Migration completed successfully!");
 	}
@@ -142,21 +153,34 @@ public class Main {
 		Objects.requireNonNull(fromFirstHeadingText);
 
 		/*
-		 * primary category
+		 * primary category - extract from page or infer from title structure
 		 */
 		final List<String> pageCategories = document.select(".mw-normal-catlinks ul > li > a").stream().map(c -> {
 			return c.text();
 		}).filter(c -> {
 			return !CategoryUtils.CATEGORIES_EXCLUDED.contains(c);
 		}).collect(Collectors.toList());
+		
+		// Also try to extract category from title structure (e.g., "Magento_2_Extensions/Order_Export")
+		String inferredCategory = inferCategoryFromTitle(fromTitle);
 
 		final MediaWikiCategoryRecord fallback = isRedirect
 				? new MediaWikiCategoryRecord("Weiterleitung", "Weiterleitung", 0)
-				: new MediaWikiCategoryRecord("", "", 0);
+				: new MediaWikiCategoryRecord(inferredCategory != null ? inferredCategory : "General Information", 
+				                              inferredCategory != null ? inferredCategory : "General Information", 0);
 
 		final MediaWikiCategoryRecord fromCategory = categories.stream().filter(c -> {
 			return pageCategories.contains(c.text());
-		}).findFirst().orElse(fallback);
+		}).findFirst().orElseGet(() -> {
+			// If no category found in page, try to match inferred category
+			if (inferredCategory != null) {
+				return categories.stream()
+					.filter(c -> c.text() != null && c.text().equalsIgnoreCase(inferredCategory))
+					.findFirst()
+					.orElse(fallback);
+			}
+			return fallback;
+		});
 
 		/*
 		 * article body
@@ -182,5 +206,40 @@ public class Main {
 		 */
 		return new ArticleRecord(fromTitle, fromUrl, fromFirstHeadingText, fromCategory, parserOutput,
 				assetRecords.values());
+	}
+	
+	/**
+	 * Infer category from title structure.
+	 * Titles like "Magento_2_Extensions/Order_Export" should be categorized as "Magento 2 Extensions"
+	 */
+	private static String inferCategoryFromTitle(final String title) {
+		if (title == null) return null;
+		
+		// Check for known category prefixes in title
+		final String normalizedTitle = title.replace("_", " ");
+		
+		// Known category mappings
+		final String[][] knownCategories = {
+			{"Magento 2 Extensions", "Magento 2 Extensions"},
+			{"Magento Extensions", "Magento Extensions"},
+			{"Magento Integration Suite", "Magento Integration Suite"},
+			{"Product Feed Setup", "Product Feed Setup"},
+			{"Connectors", "Connectors"},
+			{"Private", "Private"},
+			{"Feed Wizard", "Feed Wizard"},
+			{"Troubleshooting", "Troubleshooting"},
+			{"FTP", "General Information"},
+			{"Order Export", "General Information"},
+			{"Error", "Troubleshooting"},
+			{"AOE Scheduler", "General Information"},
+		};
+		
+		for (final String[] mapping : knownCategories) {
+			if (normalizedTitle.startsWith(mapping[0] + "/") || normalizedTitle.startsWith(mapping[0] + ":")) {
+				return mapping[1];
+			}
+		}
+		
+		return null;
 	}
 }

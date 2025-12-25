@@ -25,35 +25,59 @@ public class DocusaurusConfigWriter {
 		sb.append("const sidebars = {\n");
 		sb.append("  mainSidebar: [\n");
 		
-		// Add main page - use cleaned filename
-		sb.append("    {\n");
-		sb.append("      type: 'doc',\n");
-		sb.append("      id: 'Main_Page/index',\n");
-		sb.append("      label: 'Main Page',\n");
-		sb.append("    },\n");
+		// Define hierarchical sidebar structure
+		// Group related categories together - ORDERED: General Info, Magento 2, Magento 1, Integration Suite, Product Feeds
+		final java.util.LinkedHashMap<String, List<String>> sidebarGroups = new java.util.LinkedHashMap<>();
+		sidebarGroups.put("General Information", List.of("General Information", "Troubleshooting", "Private"));
+		sidebarGroups.put("Magento 2", List.of("Magento 2 Extensions", "Magento 2"));
+		sidebarGroups.put("Magento 1", List.of("Magento Extensions", "Magento 1"));
+		sidebarGroups.put("Integration Suite", List.of("Magento Integration Suite", "Connectors"));
+		sidebarGroups.put("Product Feeds", List.of("Product Feed Setup", "Feed Wizard"));
 		
-		// Group articles by category
-		for (final MediaWikiCategoryRecord category : categories) {
-			final String categoryText = category.text();
-			if (categoryText == null || categoryText.isEmpty()) {
-				continue;
+		// Track which categories have been used
+		final java.util.Set<String> usedCategories = new java.util.HashSet<>();
+		
+		for (final java.util.Map.Entry<String, List<String>> group : sidebarGroups.entrySet()) {
+			final String groupLabel = group.getKey();
+			final List<String> categoryNames = group.getValue();
+			
+			// Collect all articles for this group
+			final List<ArticleRecord> groupArticles = new java.util.ArrayList<>();
+			for (final String catName : categoryNames) {
+				groupArticles.addAll(articlesByCategory.getOrDefault(catName, List.of()));
+				usedCategories.add(catName);
 			}
 			
-			final List<ArticleRecord> articlesInCategory = articlesByCategory.getOrDefault(categoryText, List.of());
+			if (groupArticles.isEmpty()) continue;
 			
-			if (articlesInCategory.isEmpty()) {
-				continue;
-			}
+			// Sort articles alphabetically
+			groupArticles.sort((a, b) -> a.fromHeading().compareToIgnoreCase(b.fromHeading()));
+			
+			// Filter out Main_Page - it will be the homepage
+			final List<ArticleRecord> filteredArticles = groupArticles.stream()
+				.filter(a -> !a.fromTitle().equals("Main_Page") && !a.fromTitle().equals("Main Page"))
+				.collect(Collectors.toList());
+			
+			if (filteredArticles.isEmpty()) continue;
 			
 			sb.append("    {\n");
 			sb.append("      type: 'category',\n");
-			sb.append("      label: '").append(escapeJavaScript(categoryText)).append("',\n");
+			sb.append("      label: '").append(escapeJavaScript(groupLabel)).append("',\n");
+			sb.append("      collapsible: true,\n");
+			sb.append("      collapsed: true,\n");
 			sb.append("      items: [\n");
 			
-			for (final ArticleRecord article : articlesInCategory) {
-				// Use cleaned article title for the path
+			for (final ArticleRecord article : filteredArticles) {
 				final String cleanedTitle = cleanPathForSidebar(article.fromTitle());
-				final String readableTitle = article.fromHeading();
+				// Clean the label - remove category prefix if present
+				String readableTitle = article.fromHeading();
+				for (final String catName : categoryNames) {
+					if (readableTitle.startsWith(catName + ":")) {
+						readableTitle = readableTitle.substring(catName.length() + 1).trim();
+						break;
+					}
+				}
+				
 				sb.append("        {\n");
 				sb.append("          type: 'doc',\n");
 				sb.append("          id: '").append(cleanedTitle).append("/index',\n");
@@ -65,15 +89,34 @@ public class DocusaurusConfigWriter {
 			sb.append("    },\n");
 		}
 		
-		// Add uncategorized articles
-		final List<ArticleRecord> uncategorized = articlesByCategory.getOrDefault("", List.of());
-		if (!uncategorized.isEmpty()) {
+		// Add any remaining uncategorized articles
+		final List<ArticleRecord> uncategorized = new java.util.ArrayList<>();
+		uncategorized.addAll(articlesByCategory.getOrDefault("", List.of()));
+		
+		// Also add articles from categories not in our defined groups
+		for (final java.util.Map.Entry<String, List<ArticleRecord>> entry : articlesByCategory.entrySet()) {
+			if (!usedCategories.contains(entry.getKey()) && !entry.getKey().isEmpty()) {
+				uncategorized.addAll(entry.getValue());
+			}
+		}
+		
+		// Filter out Main_Page and redirects
+		final List<ArticleRecord> filteredUncategorized = uncategorized.stream()
+			.filter(a -> !a.fromTitle().equals("Main_Page") && !a.fromTitle().equals("Main Page"))
+			.filter(a -> a.fromCategory() == null || !a.fromCategory().text().equals("Weiterleitung"))
+			.collect(Collectors.toList());
+		
+		if (!filteredUncategorized.isEmpty()) {
+			filteredUncategorized.sort((a, b) -> a.fromHeading().compareToIgnoreCase(b.fromHeading()));
+			
 			sb.append("    {\n");
 			sb.append("      type: 'category',\n");
-			sb.append("      label: 'General',\n");
+			sb.append("      label: 'Other',\n");
+			sb.append("      collapsible: true,\n");
+			sb.append("      collapsed: true,\n");
 			sb.append("      items: [\n");
 			
-			for (final ArticleRecord article : uncategorized) {
+			for (final ArticleRecord article : filteredUncategorized) {
 				final String cleanedTitle = cleanPathForSidebar(article.fromTitle());
 				final String readableTitle = article.fromHeading();
 				sb.append("        {\n");
@@ -96,7 +139,20 @@ public class DocusaurusConfigWriter {
 		System.out.println("Written Docusaurus sidebar to " + sidebarPath);
 	}
 	
-	public static void writeDocusaurusConfig() throws IOException {
+	public static void writeDocusaurusConfig(final List<ArticleRecord> articles) throws IOException {
+		// Generate _redirects file for Cloudflare Pages (301 redirects from /wiki/* to /*)
+		final StringBuilder redirectsFile = new StringBuilder();
+		redirectsFile.append("# Redirects from old MediaWiki URLs to new Docusaurus URLs\n");
+		redirectsFile.append("# Format: /from /to [status]\n\n");
+		
+		// General redirect rule: /wiki/* -> /*
+		redirectsFile.append("/wiki/* /:splat 301\n");
+		
+		final Path redirectsPath = Paths.get(Config.BASE_PATH, "..", "static", "_redirects");
+		Files.createDirectories(redirectsPath.getParent());
+		Files.writeString(redirectsPath, redirectsFile.toString());
+		System.out.println("Written _redirects file to " + redirectsPath);
+		
 		final String config = """
 // @ts-check
 // `@type` JSDoc annotations allow editor autocompletion and type checking
@@ -116,6 +172,9 @@ const config = {
 
   url: 'https://support.xtento.com',
   baseUrl: '/',
+
+  // Remove trailing slashes from URLs
+  trailingSlash: false,
 
   organizationName: 'xtento',
   projectName: 'support-wiki',
@@ -205,7 +264,7 @@ const config = {
             items: [
               {
                 label: 'Main Page',
-                to: '/Main_Page',
+                to: '/',
               },
               {
                 label: 'Contact Us',
@@ -241,7 +300,6 @@ const config = {
       prism: {
         theme: prismThemes.github,
         darkTheme: prismThemes.dracula,
-        additionalLanguages: ['php', 'bash', 'json', 'xml'],
       },
     }),
 };

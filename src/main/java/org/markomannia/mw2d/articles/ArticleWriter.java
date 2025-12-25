@@ -74,11 +74,65 @@ public class ArticleWriter {
 		return result;
 	}
 
+	/**
+	 * Convert HTML tables to GFM Markdown tables before CopyDown processing.
+	 * CopyDown doesn't support tables natively, so we handle them separately.
+	 */
+	private static String convertTablesToMarkdown(final String html) {
+		org.jsoup.nodes.Document doc = org.jsoup.Jsoup.parse(html);
+		
+		for (org.jsoup.nodes.Element table : doc.select("table")) {
+			StringBuilder md = new StringBuilder("\n\n");
+			
+			org.jsoup.select.Elements rows = table.select("tr");
+			boolean headerDone = false;
+			int columnCount = 0;
+			
+			for (org.jsoup.nodes.Element row : rows) {
+				org.jsoup.select.Elements cells = row.select("th, td");
+				
+				if (cells.isEmpty()) continue;
+				
+				// Track column count from first row
+				if (columnCount == 0) {
+					columnCount = cells.size();
+				}
+				
+				md.append("|");
+				for (org.jsoup.nodes.Element cell : cells) {
+					String text = cell.text().trim().replace("|", "\\|").replace("\n", " ");
+					md.append(" ").append(text).append(" |");
+				}
+				md.append("\n");
+				
+				// Add separator row after first row (header)
+				if (!headerDone) {
+					md.append("|");
+					for (int i = 0; i < columnCount; i++) {
+						md.append(" --- |");
+					}
+					md.append("\n");
+					headerDone = true;
+				}
+			}
+			
+			md.append("\n");
+			
+			// Replace the table with a text node containing the markdown
+			table.replaceWith(new org.jsoup.nodes.TextNode(md.toString()));
+		}
+		
+		return doc.body().html();
+	}
+
 	private static String createMarkdown(final ArticleRecord article) {
 		final String rawHtml = article.elements().html();
 		
+		// Convert tables to markdown before CopyDown
+		final String htmlWithTables = convertTablesToMarkdown(rawHtml);
+		
 		// Extract code blocks before CopyDown processing
-		final String html = extractCodeBlocks(rawHtml);
+		final String html = extractCodeBlocks(htmlWithTables);
 		
 		// Configure CopyDown to use fenced code blocks instead of indented
 		final Options options = OptionsBuilder.anOptions()
@@ -93,16 +147,34 @@ public class ArticleWriter {
 
 		// Create Docusaurus frontmatter
 		final StringBuilder frontmatter = new StringBuilder();
+		// Strip category prefix from title if present (e.g., "Magento 2 Extensions:Advanced Order Status" -> "Advanced Order Status")
+		String cleanTitle = article.fromHeading();
+		if (cleanTitle.contains(":")) {
+			int colonIndex = cleanTitle.indexOf(':');
+			String beforeColon = cleanTitle.substring(0, colonIndex);
+			// Only strip if it looks like a category prefix (contains "Magento", "Extensions", "Integration", etc.)
+			if (beforeColon.contains("Magento") || beforeColon.contains("Extensions") || 
+			    beforeColon.contains("Integration") || beforeColon.contains("Connectors") ||
+			    beforeColon.contains("Product Feed") || beforeColon.contains("General")) {
+				cleanTitle = cleanTitle.substring(colonIndex + 1).trim();
+			}
+		}
+		
 		frontmatter.append("---\n");
-		frontmatter.append("title: \"").append(article.fromHeading().replace("\"", "\\\"")).append("\"\n");
+		frontmatter.append("title: \"").append(cleanTitle.replace("\"", "\\\"")).append("\"\n");
+		
+		// Make Main_Page the homepage with slug: /
+		if (article.fromTitle().equals("Main_Page") || article.fromTitle().equals("Main Page")) {
+			frontmatter.append("slug: /\n");
+		}
 		
 		if (article.fromCategory() != null && article.fromCategory().text() != null && !article.fromCategory().text().isEmpty()) {
-			frontmatter.append("sidebar_label: \"").append(article.fromHeading().replace("\"", "\\\"")).append("\"\n");
+			frontmatter.append("sidebar_label: \"").append(cleanTitle.replace("\"", "\\\"")).append("\"\n");
 		}
 		
 		frontmatter.append("---\n\n");
 		
-		final String markdown = frontmatter.toString() + "# " + article.fromHeading() + "\n\n" + parserOutputMarkdownWithFixedUnderline;
+		final String markdown = frontmatter.toString() + "# " + cleanTitle + "\n\n" + parserOutputMarkdownWithFixedUnderline;
 		final String markdownWithYoutube = YoutubeRewriter.rewriteYoutubeLinks(markdown);
 		final String markdownWithFixedAssetLinks = MarkdownUtils.fixRemainingAssetLinks(markdownWithYoutube);
 		
@@ -113,6 +185,10 @@ public class ArticleWriter {
 	}
 
 	public static String determineDirectoryPath(final ArticleRecord article) {
+		// Main_Page goes directly to root as index.md (will become /)
+		if (article.fromTitle().equals("Main_Page") || article.fromTitle().equals("Main Page")) {
+			return Config.BASE_PATH;
+		}
 		return Config.BASE_PATH + ArticleUtils.determineArticleWithCategoryPath(article);
 	}
 

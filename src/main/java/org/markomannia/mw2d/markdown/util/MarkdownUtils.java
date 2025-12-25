@@ -34,11 +34,18 @@ public class MarkdownUtils {
 
 		final String colonFixed = linkReplaced7.replace(") :", "):");
 		
+		// Remove MediaWiki navigation links
+		final String mwNavRemoved = colonFixed
+			.replaceAll("\\[navigation\\]\\(#mw-head\\)", "")
+			.replaceAll("\\[search\\]\\(#p-search\\)", "")
+			.replace("Jump to: , ", "")
+			.replace("Jump to: ", "");
+		
 		// Note: fixMultilineInlineCode is no longer needed since we handle <pre> tags
 		// directly in ArticleWriter and preserve fenced code blocks
 		
 		// Escape MDX-problematic characters (curly braces are interpreted as JSX expressions)
-		final String mdxEscaped = escapeMdxCharacters(colonFixed);
+		final String mdxEscaped = escapeMdxCharacters(mwNavRemoved);
 
 		return mdxEscaped;
 	}
@@ -59,9 +66,25 @@ public class MarkdownUtils {
 		for (int lineIdx = 0; lineIdx < lines.length; lineIdx++) {
 			String line = lines[lineIdx];
 			
-			// Check for fenced code block markers (``` or ~~~)
+			// Check for fenced code block markers - must be EXACTLY ``` or ~~~ at start of line
+			// (with optional language identifier after)
+			// Don't match longer sequences like ````` which are inline code
 			final String trimmedLine = line.trim();
-			if (trimmedLine.startsWith("```") || trimmedLine.startsWith("~~~")) {
+			boolean isFenceMarker = false;
+			if (trimmedLine.startsWith("```") && !trimmedLine.startsWith("````")) {
+				// Check if rest of line after ``` is empty or just a language identifier
+				String afterFence = trimmedLine.substring(3);
+				if (afterFence.isEmpty() || afterFence.matches("^[a-zA-Z0-9_-]*$")) {
+					isFenceMarker = true;
+				}
+			} else if (trimmedLine.startsWith("~~~") && !trimmedLine.startsWith("~~~~")) {
+				String afterFence = trimmedLine.substring(3);
+				if (afterFence.isEmpty() || afterFence.matches("^[a-zA-Z0-9_-]*$")) {
+					isFenceMarker = true;
+				}
+			}
+			
+			if (isFenceMarker) {
 				inFencedCodeBlock = !inFencedCodeBlock;
 				sb.append(line);
 			} else if (inFencedCodeBlock) {
