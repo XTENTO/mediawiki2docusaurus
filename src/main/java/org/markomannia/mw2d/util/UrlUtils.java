@@ -13,20 +13,91 @@ import java.util.regex.Pattern;
 public class UrlUtils {
 
 	public static String cleanFileName(final String fileName) {
-		final String specialCharsRemoved = fileName.replace("'", "").replace("´", "").replace("´", "").replace(",", "")
-				.replace("!", "").replace("?", "").replace("Â", "").replace(".", "");
+		// Extract file extension (only for actual files, not directories)
+		String extension = "";
+		String nameWithoutExtension = fileName;
+		final int lastDotIndex = fileName.lastIndexOf('.');
+		// Only treat as extension if there's content after the dot and it looks like a file extension
+		if (lastDotIndex > 0 && lastDotIndex < fileName.length() - 1) {
+			final String possibleExtension = fileName.substring(lastDotIndex);
+			// Only common file extensions (2-4 chars after dot, no special chars)
+			if (possibleExtension.matches("\\.[a-zA-Z0-9]{2,4}")) {
+				extension = possibleExtension;
+				nameWithoutExtension = fileName.substring(0, lastDotIndex);
+			}
+		}
+		
+		// Remove problematic special characters that cause issues in file paths and Docusaurus sidebar IDs
+		final String specialCharsRemoved = nameWithoutExtension
+				.replace("'", "").replace("´", "").replace("´", "").replace(",", "")
+				.replace("!", "").replace("?", "").replace("Â", "")
+				.replace(":", "/")   // Doppelpunkt -> Subpfad (z.B. "Magento_2_Extensions:Custom_SMTP" -> "Magento_2_Extensions/Custom_SMTP")
+				.replace("&", "_")   // Ampersand -> Unterstrich (z.B. "Royal_Mail_Click_&_Drop")
+				.replace(".", "_")   // Punkt -> Unterstrich (z.B. "Xtento/.../Test")
+				.replace("\"", "")   // Anführungszeichen entfernen
+				.replace("<", "")    // Kleiner-als entfernen
+				.replace(">", "")    // Größer-als entfernen
+				.replace("|", "_")   // Pipe -> Unterstrich
+				.replace("*", "")    // Stern entfernen
+				.replace("\\", "/"); // Backslash -> Subpfad
 
 		final String germanCharsReplaced = specialCharsRemoved.replace("ü", "ue").replace("ä", "ae").replace("ö", "oe")
 				.replace("Ü", "Ue").replace("Ä", "Ae").replace("Ö", "Oe").replace("ß", "ss");
 
-		final String specialCharsReplaced = germanCharsReplaced.replace("(", "_").replace(")", "_").replace(" ", "_")
-				.replace("____", "_").replace("___", "_").replace("__", "_");
+		final String specialCharsReplaced = germanCharsReplaced.replace("(", "_").replace(")", "_").replace(" ", "_");
+		
+		// Normalize multiple underscores to single ones
+		String normalized = specialCharsReplaced;
+		while (normalized.contains("_____")) {
+			normalized = normalized.replace("_____", "_");
+		}
+		while (normalized.contains("____")) {
+			normalized = normalized.replace("____", "_");
+		}
+		while (normalized.contains("___")) {
+			normalized = normalized.replace("___", "_");
+		}
+		while (normalized.contains("__")) {
+			normalized = normalized.replace("__", "_");
+		}
+		
+		// Also normalize multiple slashes
+		while (normalized.contains("//")) {
+			normalized = normalized.replace("//", "/");
+		}
 
-		final String trailingCharsRemoved = specialCharsReplaced.endsWith("_")
-				? specialCharsReplaced.substring(0, specialCharsReplaced.length() - 1)
-				: specialCharsReplaced;
+		// Remove leading/trailing underscores and slashes from each path segment
+		String result = normalized;
+		// Handle path segments separately
+		if (result.contains("/")) {
+			final String[] segments = result.split("/");
+			final StringBuilder sb = new StringBuilder();
+			for (int i = 0; i < segments.length; i++) {
+				String segment = segments[i];
+				while (segment.startsWith("_")) {
+					segment = segment.substring(1);
+				}
+				while (segment.endsWith("_")) {
+					segment = segment.substring(0, segment.length() - 1);
+				}
+				if (!segment.isEmpty()) {
+					if (sb.length() > 0) {
+						sb.append("/");
+					}
+					sb.append(segment);
+				}
+			}
+			result = sb.toString();
+		} else {
+			while (result.startsWith("_")) {
+				result = result.substring(1);
+			}
+			while (result.endsWith("_")) {
+				result = result.substring(0, result.length() - 1);
+			}
+		}
 
-		return trailingCharsRemoved;
+		return result + extension;
 	}
 
 	public static Map<String, String> getQueryMapForQuery(final String query) {
@@ -45,7 +116,7 @@ public class UrlUtils {
 		final URL url = parse(urlString);
 		final String query = url.getQuery();
 
-		return getQueryMapForQuery(query);
+		return query != null ? getQueryMapForQuery(query) : new HashMap<>();
 	}
 
 	public static URL parse(final String url) {

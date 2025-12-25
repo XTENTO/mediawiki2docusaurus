@@ -11,7 +11,11 @@ public class ArticleUtils {
 	}
 
 	public static String determineArticleWithCategoryPath(final ArticleRecord article) {
-		final String categoryDirectory = article.fromCategory() == null ? "" : "/" + article.fromCategory().text();
+		final String categoryText = article.fromCategory() == null || article.fromCategory().text() == null || article.fromCategory().text().isEmpty()
+				? ""
+				: article.fromCategory().text();
+		
+		final String categoryDirectory = categoryText.isEmpty() ? "" : "/" + categoryText;
 
 		return CategoryUtils.cleanCategoryDirectoryName(categoryDirectory) + "/"
 				+ cleanArticleFileName(article.fromTitle());

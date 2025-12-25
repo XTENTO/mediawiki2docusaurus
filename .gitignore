@@ -4,7 +4,7 @@
 *.ear
 *.jar
 hs_err_pid*
-
+out/
 
 ### Eclipse ###
 .settings/

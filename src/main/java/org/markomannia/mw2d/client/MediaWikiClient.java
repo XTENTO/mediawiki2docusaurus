@@ -21,11 +21,23 @@ import org.markomannia.mw2d.document.util.DocumentUtils;
 
 public class MediaWikiClient {
 
-	private static final String ALL_CATEGORIES_URL = Config.MEDIAWIKI_URL + "/index.php?title=Spezial:Kategorien";
+	private static final String ALL_CATEGORIES_URL = Config.MEDIAWIKI_URL + "/wiki/Special:Categories";
 
-	private static final String ALL_PAGES_START_URL = Config.MEDIAWIKI_URL + "/index.php?title=Spezial:Alle_Seiten";
+	private static final String ALL_PAGES_START_URL = Config.MEDIAWIKI_URL + "/wiki/Special:AllPages";
 
 	public static byte[] getAsset(final String url) throws IOException, InterruptedException {
+		// Skip FTP URLs - we can't download them via HTTP client
+		if (url == null || url.toLowerCase().startsWith("ftp://") || url.toLowerCase().startsWith("ftps://")) {
+			System.out.println("Warning: Skipping FTP URL: " + url);
+			return null;
+		}
+		
+		// Skip non-HTTP(S) URLs
+		if (!url.toLowerCase().startsWith("http://") && !url.toLowerCase().startsWith("https://")) {
+			System.out.println("Warning: Skipping unsupported URL scheme: " + url);
+			return null;
+		}
+		
 		final HttpRequest httpRequest = HttpRequest.newBuilder().uri(URI.create(url))
 				.timeout(Duration.ofMillis(10 * 1000)).header("Authorization", "Basic " + Config.OPTIONAL_AUTH).build();
 
@@ -65,21 +77,27 @@ public class MediaWikiClient {
 
 			document.select("ul > li").forEach(li -> {
 				final Element href = DocumentUtils.getFirst(li.select("> a[href]"));
+				
+				if (href == null) {
+					System.out.println("Warning: Could not find href element in category list item, skipping");
+					return;
+				}
+				
 				final String title = href.attr("title");
 				final String text = href.text();
 
 				if (List.of(CategoryUtils.CATEGORIES_EXCLUDED).contains(text)) {
 					System.out.println("Ignoring category " + text);
-				} else if (title.contains("Kategorie:")) {
-					final Matcher m = Pattern.compile("\\(([0-9\\.]+) Eintr").matcher(li.text());
-					final int numberEntries = m.find() ? Integer.parseInt(m.group(1).replace(".", "")) : null;
+				} else if (title.contains("Category:")) {
+					final Matcher m = Pattern.compile("\\(([0-9,]+) pages?\\)").matcher(li.text());
+					final Integer numberEntries = m.find() ? Integer.parseInt(m.group(1).replace(",", "")) : null;
 
 					result.add(new MediaWikiCategoryRecord(title, text, numberEntries));
 				}
 			});
 
 			final String nextUrl = document.select("a[href]").stream().filter(link -> {
-				return link.text().contains("nächste");
+				return link.text().contains("next") || link.text().contains("Next");
 			}).map(link -> {
 				return link.absUrl("href");
 			}).findFirst().orElse(null);
@@ -125,7 +143,7 @@ public class MediaWikiClient {
 			final String body = response.body();
 			final Document document = Jsoup.parse(body, Config.MEDIAWIKI_URL);
 
-			document.select("ul.mw-allpages-chunk > li > a[href]").forEach(link -> {
+			document.select("table.mw-allpages-table-chunk a[href]").forEach(link -> {
 				final String absUrl = link.absUrl("href");
 				final String classNames = link.attr("class");
 				final boolean isRedirect = classNames.contains("mw-redirect");
@@ -133,8 +151,8 @@ public class MediaWikiClient {
 				result.add(new MediaWikiPageRecord(absUrl, isRedirect));
 			});
 
-			final String nextUrl = document.select(".mw-allpages-nav > a[href]").stream().filter(link -> {
-				return link.text().contains("Nächste Seite");
+			final String nextUrl = document.select(".mw-allpages-nav a[href]").stream().filter(link -> {
+				return link.text().contains("next") || link.text().contains("Next");
 			}).map(link -> {
 				return link.absUrl("href");
 			}).findFirst().orElse(null);

@@ -22,6 +22,7 @@ import org.markomannia.mw2d.client.MediaWikiCategoryRecord;
 import org.markomannia.mw2d.client.MediaWikiClient;
 import org.markomannia.mw2d.client.MediaWikiPageRecord;
 import org.markomannia.mw2d.document.util.DocumentUtils;
+import org.markomannia.mw2d.docusaurus.DocusaurusConfigWriter;
 import org.markomannia.mw2d.util.UrlUtils;
 
 public class Main {
@@ -81,6 +82,21 @@ public class Main {
 
 			ArticleWriter.writeArticle(article);
 		}
+		
+		// Group articles by category for Docusaurus sidebar
+		final Map<String, List<ArticleRecord>> articlesByCategory = new HashMap<>();
+		for (final ArticleRecord article : articles) {
+			final String categoryText = article.fromCategory() == null || article.fromCategory().text() == null
+					? ""
+					: article.fromCategory().text();
+			articlesByCategory.computeIfAbsent(categoryText, k -> new ArrayList<>()).add(article);
+		}
+		
+		// Write Docusaurus configuration files
+		DocusaurusConfigWriter.writeSidebar(categoriesSorted, articlesByCategory);
+		DocusaurusConfigWriter.writeDocusaurusConfig();
+		
+		System.out.println("Migration completed successfully!");
 	}
 
 	private static ArticleRecord onPageCreateArticle(final String html, final String fromUrl, final boolean isRedirect,
@@ -93,7 +109,24 @@ public class Main {
 		 */
 		final Map<String, String> queryMap = UrlUtils.getQueryMapForUrl(fromUrl);
 
-		final String fromTitle = queryMap.get("title");
+		String fromTitle = queryMap.get("title");
+		
+		// If no title in query params, extract from URL path (e.g., /wiki/Page_Title)
+		if (fromTitle == null || fromTitle.isBlank()) {
+			try {
+				final String path = new java.net.URL(fromUrl).getPath();
+				// Extract title from /wiki/PageTitle format
+				if (path.contains("/wiki/")) {
+					fromTitle = path.substring(path.lastIndexOf("/wiki/") + 6);
+					// URL decode and replace underscores with spaces
+					fromTitle = java.net.URLDecoder.decode(fromTitle, java.nio.charset.StandardCharsets.UTF_8)
+							.replace("_", " ");
+				}
+			} catch (final Exception e) {
+				System.out.println("Warning: Could not extract title from URL: " + fromUrl);
+			}
+		}
+		
 		Objects.requireNonNull(fromTitle);
 
 		/*
@@ -119,7 +152,7 @@ public class Main {
 
 		final MediaWikiCategoryRecord fallback = isRedirect
 				? new MediaWikiCategoryRecord("Weiterleitung", "Weiterleitung", 0)
-				: new MediaWikiCategoryRecord("Allgemein", "Allgemein", 0);
+				: new MediaWikiCategoryRecord("", "", 0);
 
 		final MediaWikiCategoryRecord fromCategory = categories.stream().filter(c -> {
 			return pageCategories.contains(c.text());
@@ -129,6 +162,17 @@ public class Main {
 		 * article body
 		 */
 		final Elements parserOutput = document.select(".mw-parser-output");
+		if (parserOutput.isEmpty()) {
+			// Fallback: Try to find content in #bodyContent if .mw-parser-output is not found
+			final Element bodyContent = document.selectFirst("#bodyContent");
+			if (bodyContent != null) {
+				final Elements bodyContentElements = new org.jsoup.select.Elements(bodyContent);
+				final Map<String, AssetRecord> assetRecords = AssetUtils.rewriteAssets(bodyContentElements);
+				
+				return new ArticleRecord(fromTitle, fromUrl, fromFirstHeadingText, fromCategory, 
+						bodyContentElements, assetRecords.values());
+			}
+		}
 		Objects.requireNonNull(parserOutput);
 
 		final Map<String, AssetRecord> assetRecords = AssetUtils.rewriteAssets(parserOutput);

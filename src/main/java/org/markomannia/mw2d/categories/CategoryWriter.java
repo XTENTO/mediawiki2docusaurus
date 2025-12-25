@@ -26,6 +26,11 @@ public class CategoryWriter {
 	}
 
 	public static void writeCategory(final MediaWikiCategoryRecord category) throws IOException, InterruptedException {
+		// Skip empty/null categories to avoid creating a duplicate root index.md
+		if (category == null || category.text() == null || category.text().isEmpty()) {
+			return;
+		}
+		
 		final String markdown = createMarkdown(category);
 
 		final String directoryPath = determineDirectoryPath(category);

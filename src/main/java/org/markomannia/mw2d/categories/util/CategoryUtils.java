@@ -17,7 +17,7 @@ public class CategoryUtils {
 
 	public static List<MediaWikiCategoryRecord> sortCategories(final List<MediaWikiCategoryRecord> categories) {
 		final Comparator<MediaWikiCategoryRecord> comparator = Comparator
-				.comparing(MediaWikiCategoryRecord::numberEntries, Comparator.reverseOrder());
+				.comparing(MediaWikiCategoryRecord::numberEntries, Comparator.nullsLast(Comparator.reverseOrder()));
 
 		final List<MediaWikiCategoryRecord> result = new ArrayList<>(categories);
 		result.sort(comparator);
