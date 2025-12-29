@@ -35,13 +35,20 @@ public class Main {
 
 		final List<MediaWikiPageRecord> pages = MediaWikiClient.getPages();
 
-		// Filter out Special: and Category: pages (based on URL pattern)
+		// Ignore list - pages containing these strings in URL will be skipped
+		final List<String> ignoreList = List.of(
+			"Private:Server",
+			"Private/Server"
+		);
+
+		// Filter out Special:, Category: pages and ignored pages (based on URL pattern)
 		final List<MediaWikiPageRecord> realPages = pages.stream()
 				.filter(p -> !p.isRedirect())
 				.filter(p -> !p.url().contains("/Special:"))
 				.filter(p -> !p.url().contains("/Category:"))
 				.filter(p -> !p.url().contains("title=Special:"))
 				.filter(p -> !p.url().contains("title=Category:"))
+				.filter(p -> ignoreList.stream().noneMatch(ignore -> p.url().contains(ignore)))
 				.collect(Collectors.toList());
 		final List<MediaWikiPageRecord> redirects = pages.stream()
 				.filter(p -> p.isRedirect())
@@ -49,6 +56,7 @@ public class Main {
 				.filter(p -> !p.url().contains("/Category:"))
 				.filter(p -> !p.url().contains("title=Special:"))
 				.filter(p -> !p.url().contains("title=Category:"))
+				.filter(p -> ignoreList.stream().noneMatch(ignore -> p.url().contains(ignore)))
 				.collect(Collectors.toList());
 
 		System.out.println("Found " + realPages.size() + " articles");

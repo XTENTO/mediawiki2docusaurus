@@ -14,6 +14,12 @@ public class DocumentUtils {
 	public static void cleanDocument(final Document document) {
 		// remove toc
 		document.select("#toc").remove();
+		
+		// remove "From XTENTO Support Wiki" subtitle
+		document.select("#siteSub").remove();
+		
+		// remove "(Redirected from ...)" notice in contentSub
+		document.select("#contentSub").remove();
 
 		// remove Tondateibeschreibungsseite mit Lizenzangabe around files
 		document.select(".mw-parser-output sup a").remove();
@@ -36,7 +42,7 @@ public class DocumentUtils {
 		document.select("#catlinks").remove();
 		document.select(".printfooter").remove();
 		
-		// remove "(Redirected from ...)" notice
+		// remove "(Redirected from ...)" notice (class-based)
 		document.select(".mw-redirectedfrom").remove();
 		
 		// Clean syntax-highlighted code blocks - strip span tags but keep text

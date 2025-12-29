@@ -74,15 +74,21 @@ public class ArticleWriter {
 		return result;
 	}
 
+	private static final String TABLE_MARKER = "___TABLE_MARKER_";
+	private static final java.util.Map<String, String> tableMap = new java.util.concurrent.ConcurrentHashMap<>();
+	private static int tableCounter = 0;
+
 	/**
 	 * Convert HTML tables to GFM Markdown tables before CopyDown processing.
 	 * CopyDown doesn't support tables natively, so we handle them separately.
+	 * We use markers to preserve the table formatting through CopyDown.
 	 */
 	private static String convertTablesToMarkdown(final String html) {
+		tableMap.clear();
 		org.jsoup.nodes.Document doc = org.jsoup.Jsoup.parse(html);
 		
 		for (org.jsoup.nodes.Element table : doc.select("table")) {
-			StringBuilder md = new StringBuilder("\n\n");
+			StringBuilder md = new StringBuilder();
 			
 			org.jsoup.select.Elements rows = table.select("tr");
 			boolean headerDone = false;
@@ -116,13 +122,30 @@ public class ArticleWriter {
 				}
 			}
 			
-			md.append("\n");
+			// Store the table markdown and replace with marker
+			String markerId = TABLE_MARKER + (tableCounter++) + "___";
+			tableMap.put(markerId, md.toString());
 			
-			// Replace the table with a text node containing the markdown
-			table.replaceWith(new org.jsoup.nodes.TextNode(md.toString()));
+			// Replace table with a pre element containing the marker (pre is preserved by CopyDown)
+			table.replaceWith(new org.jsoup.nodes.Element("div").text(markerId));
 		}
 		
 		return doc.body().html();
+	}
+	
+	/**
+	 * Restore tables from markers to actual markdown tables.
+	 */
+	private static String restoreTables(final String markdown) {
+		String result = markdown;
+		
+		for (java.util.Map.Entry<String, String> entry : tableMap.entrySet()) {
+			String marker = entry.getKey();
+			String table = entry.getValue();
+			result = result.replace(marker, "\n\n" + table + "\n");
+		}
+		
+		return result;
 	}
 
 	private static String createMarkdown(final ArticleRecord article) {
@@ -163,9 +186,10 @@ public class ArticleWriter {
 		frontmatter.append("---\n");
 		frontmatter.append("title: \"").append(cleanTitle.replace("\"", "\\\"")).append("\"\n");
 		
-		// Make Main_Page the homepage with slug: /
+		// Make Main_Page the homepage with slug: / and show sidebar
 		if (article.fromTitle().equals("Main_Page") || article.fromTitle().equals("Main Page")) {
 			frontmatter.append("slug: /\n");
+			frontmatter.append("displayed_sidebar: mainSidebar\n");
 		}
 		
 		if (article.fromCategory() != null && article.fromCategory().text() != null && !article.fromCategory().text().isEmpty()) {
@@ -180,8 +204,11 @@ public class ArticleWriter {
 		
 		// Restore code blocks from markers BEFORE MDX escaping
 		final String markdownWithCodeBlocks = restoreCodeBlocks(markdownWithFixedAssetLinks);
+		
+		// Restore tables from markers
+		final String markdownWithTables = restoreTables(markdownWithCodeBlocks);
 
-		return MarkdownUtils.cleanMarkdown(markdownWithCodeBlocks);
+		return MarkdownUtils.cleanMarkdown(markdownWithTables);
 	}
 
 	public static String determineDirectoryPath(final ArticleRecord article) {

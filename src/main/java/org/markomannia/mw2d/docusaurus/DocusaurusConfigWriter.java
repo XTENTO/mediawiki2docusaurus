@@ -140,12 +140,74 @@ public class DocusaurusConfigWriter {
 	}
 	
 	public static void writeDocusaurusConfig(final List<ArticleRecord> articles) throws IOException {
-		// Generate _redirects file for Cloudflare Pages (301 redirects from /wiki/* to /*)
+		// Build redirects list for Docusaurus plugin (creates actual HTML files at old paths)
+		final StringBuilder redirectsArray = new StringBuilder();
+		redirectsArray.append("[\n");
+		
+		// Generate redirects from original MediaWiki URLs to new clean URLs
+		for (final ArticleRecord article : articles) {
+			final String fromUrl = article.fromUrl();
+			final String fromTitle = article.fromTitle();
+			
+			// Main_Page is the homepage, so redirect to /
+			String newPath;
+			if (fromTitle.equals("Main_Page") || fromTitle.equals("Main Page")) {
+				newPath = "/";
+			} else {
+				newPath = "/" + org.markomannia.mw2d.util.UrlUtils.cleanFileName(fromTitle);
+			}
+			
+			// Extract the original wiki path from the URL (e.g., /wiki/Magento_2_Extensions:Advanced_Order_Status)
+			String originalWikiPath = null;
+			try {
+				final java.net.URL url = new java.net.URL(fromUrl);
+				String path = url.getPath();
+				// Remove &redirect=no query parameter path
+				if (path.contains("/wiki/")) {
+					originalWikiPath = path; // Keep the full /wiki/... path
+				} else if (url.getQuery() != null && url.getQuery().contains("title=")) {
+					// Handle /index.php?title=... format
+					String title = fromUrl.substring(fromUrl.indexOf("title=") + 6);
+					if (title.contains("&")) {
+						title = title.substring(0, title.indexOf("&"));
+					}
+					originalWikiPath = "/wiki/" + title;
+				}
+			} catch (final Exception e) {
+				System.out.println("Warning: Could not parse URL for redirects: " + fromUrl);
+			}
+			
+			if (originalWikiPath != null) {
+				// Add redirect from original wiki path (with colons) to new path (with slashes)
+				redirectsArray.append("      { from: '").append(escapeJavaScript(originalWikiPath)).append("', to: '").append(escapeJavaScript(newPath)).append("' },\n");
+				
+				// Also add URL-encoded version (: -> %3A) for browser compatibility
+				if (originalWikiPath.contains(":")) {
+					final String encodedWikiPath = originalWikiPath.replace(":", "%3A");
+					redirectsArray.append("      { from: '").append(escapeJavaScript(encodedWikiPath)).append("', to: '").append(escapeJavaScript(newPath)).append("' },\n");
+				}
+				
+				// Also add redirect without /wiki/ prefix
+				final String pathWithoutWiki = originalWikiPath.replace("/wiki/", "/");
+				if (!pathWithoutWiki.equals(newPath)) {
+					redirectsArray.append("      { from: '").append(escapeJavaScript(pathWithoutWiki)).append("', to: '").append(escapeJavaScript(newPath)).append("' },\n");
+					
+					// Also URL-encoded version without /wiki/
+					if (pathWithoutWiki.contains(":")) {
+						final String encodedPath = pathWithoutWiki.replace(":", "%3A");
+						redirectsArray.append("      { from: '").append(escapeJavaScript(encodedPath)).append("', to: '").append(escapeJavaScript(newPath)).append("' },\n");
+					}
+				}
+			}
+		}
+		
+		redirectsArray.append("    ]");
+		
+		// Also write _redirects for Cloudflare (backup)
 		final StringBuilder redirectsFile = new StringBuilder();
 		redirectsFile.append("# Redirects from old MediaWiki URLs to new Docusaurus URLs\n");
 		redirectsFile.append("# Format: /from /to [status]\n\n");
-		
-		// General redirect rule: /wiki/* -> /*
+		redirectsFile.append("# General redirect rule\n");
 		redirectsFile.append("/wiki/* /:splat 301\n");
 		
 		final Path redirectsPath = Paths.get(Config.BASE_PATH, "..", "static", "_redirects");
@@ -224,6 +286,15 @@ const config = {
           customCss: './src/css/custom.css',
         },
       }),
+    ],
+  ],
+
+  plugins: [
+    [
+      '@docusaurus/plugin-client-redirects',
+      {
+        redirects: REDIRECTS_PLACEHOLDER,
+      },
     ],
   ],
 
@@ -307,9 +378,51 @@ const config = {
 export default config;
 """;
 		
+		// Replace placeholder with actual redirects array
+		final String configWithRedirects = config.replace("REDIRECTS_PLACEHOLDER", redirectsArray.toString());
+		
 		final Path configPath = Paths.get(Config.BASE_PATH, "..", "docusaurus.config.js");
-		Files.writeString(configPath, config);
+		Files.writeString(configPath, configWithRedirects);
 		System.out.println("Written Docusaurus config to " + configPath);
+		
+		// Generate custom.css with styling adjustments
+		final String customCss = """
+/* Custom CSS for XTENTO Support Wiki */
+
+/* Reduce H1 font size by 25% */
+.markdown h1:first-child {
+  font-size: 1.5rem;
+}
+
+article h1 {
+  font-size: 1.5rem;
+}
+
+/* Also reduce other heading sizes proportionally */
+.markdown h2 {
+  font-size: 1.3rem;
+}
+
+.markdown h3 {
+  font-size: 1.1rem;
+}
+
+/* Primary color customization (optional) */
+:root {
+  --ifm-color-primary: #2e8555;
+  --ifm-color-primary-dark: #29784c;
+  --ifm-color-primary-darker: #277148;
+  --ifm-color-primary-darkest: #205d3b;
+  --ifm-color-primary-light: #33925d;
+  --ifm-color-primary-lighter: #359962;
+  --ifm-color-primary-lightest: #3cad6e;
+}
+""";
+		
+		final Path cssPath = Paths.get(Config.BASE_PATH, "..", "src", "css", "custom.css");
+		Files.createDirectories(cssPath.getParent());
+		Files.writeString(cssPath, customCss);
+		System.out.println("Written custom.css to " + cssPath);
 	}
 	
 	private static String escapeJavaScript(final String str) {
